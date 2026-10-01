@@ -10,7 +10,7 @@ import saved from '../data/editions.json' with { type:'json' };
 
 // Flags are validated before anything is read, fetched or paid for: --limit=abc used to mean
 // "no limit" and quietly classified the whole archive.
-const options = parseOptions(process.argv.slice(2));
+const options = parseOptions(process.argv.slice(2), ['limit','batch','force','dry-run']);
 const limit = readNumber(options, 'limit', Infinity, {min: 1});
 const batchSize = readNumber(options, 'batch', CLASSIFICATION_BATCH_SIZE, {min: 1, max: 100});
 const force = readFlag(options, 'force');

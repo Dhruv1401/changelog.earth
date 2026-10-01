@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -185,12 +187,23 @@ assert.equal(classifyArticle({...story('u'), originalTitle:'Journal article stay
 assert.equal(classifyArticle({...story('w'), originalTitle:'Study withdrawn by the journal after review', note:'', summary:''}).evidenceStatus, 'retracted');
 
 // A typo in a flag that spends money per batch must fail before the run starts.
-assert.equal(readFlag(parseOptions(['--force']), 'force'), true);
-assert.equal(readFlag(parseOptions([]), 'force'), false);
-assert.equal(readNumber(parseOptions([]), 'limit', Infinity), Infinity);
-assert.equal(readNumber(parseOptions(['--perLevel=6']), 'perLevel', 4, {min:1, max:50}), 6);
-assert.equal(parseOptions(['--limit=5']).get('limit'), '5');
+assert.equal(readFlag(parseOptions(['--force'], ['force']), 'force'), true);
+assert.equal(readFlag(parseOptions(['--force=false'], ['force']), 'force'), false, 'A boolean flag that ignores its own value is the same silent surprise');
+assert.equal(readFlag(parseOptions([], ['force']), 'force'), false);
+assert.equal(readNumber(parseOptions([], ['limit']), 'limit', Infinity), Infinity);
+assert.equal(readNumber(parseOptions(['--perLevel=6'], ['perLevel']), 'perLevel', 4, {min:1, max:50}), 6);
+assert.equal(parseOptions(['--limit=5'], ['limit']).get('limit'), '5');
+for (const argv of [['--limt=1'], ['--limit=5'], ['-limit=1'], ['classify']]) assert.throws(() => parseOptions(argv, ['batch']), /Unknown option|Invalid option/, 'A mistyped flag must not run the script with defaults instead');
 for (const [argv, key, bounds] of [[['--limit=abc'], 'limit', {}], [['--limit=-1'], 'limit', {min:1}], [['--batch=0'], 'batch', {min:1}], [['--batch=101'], 'batch', {min:1, max:100}], [['--perLevel=1.5'], 'perLevel', {min:1}]]) {
- assert.throws(() => readNumber(parseOptions(argv), key, 1, bounds), new RegExp(`Invalid --${key}`), `A bad ${key} must not silently change what runs`);
+ assert.throws(() => readNumber(parseOptions(argv, [key]), key, 1, bounds), new RegExp(`Invalid --${key}`), `A bad ${key} must not silently change what runs`);
 }
+
+// End to end: the classification script refuses a mistyped flag before it reads or spends anything.
+const script = fileURLToPath(new URL('../scripts/classify-archive.mjs', import.meta.url));
+const typo = spawnSync(process.execPath, [script, '--limt=1'], {encoding:'utf8'});
+assert.notEqual(typo.status, 0, '--limt=1 must not run the classification');
+assert.match(typo.stderr, /Unknown option: --limt/);
+const limited = spawnSync(process.execPath, [script, '--limit=5', '--batch=10', '--dry-run'], {encoding:'utf8'});
+assert.equal(limited.status, 0, limited.stderr);
+assert.match(limited.stdout, /^Archive 352 stories · stored \d+ · pending 5 ·/m, 'Valid flags still bound the run');
 console.log('Taxonomy validation, strict classification, retries, provenance, resumable store, derived records and archive immutability pass.');
