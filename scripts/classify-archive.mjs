@@ -3,24 +3,24 @@
 // headline and publisher summary of stories that lack a current record to Groq, and writes
 // data/classifications.json incrementally. The archive itself is never modified.
 import { CLASSIFICATION_BATCH_SIZE, classifyBatch, chunk, needsClassification } from '../lib/classification.mjs';
+import { parseOptions, readFlag, readNumber } from '../lib/cli-options.mjs';
 import { putRecords, readStore, storeStats, writeStore } from '../lib/classification-store.mjs';
 import { validateArchive } from '../lib/edition-archive.mjs';
 import saved from '../data/editions.json' with { type:'json' };
 
-const options = new Map(process.argv.slice(2).map(argument => {
- const [key, value = 'true'] = argument.replace(/^--/, '').split('=');
- return [key, value];
-}));
-const limit = Number(options.get('limit') ?? Infinity);
-const batchSize = Number(options.get('batch') ?? CLASSIFICATION_BATCH_SIZE);
-const force = options.has('force');
-const dryRun = options.has('dry-run');
+// Flags are validated before anything is read, fetched or paid for: --limit=abc used to mean
+// "no limit" and quietly classified the whole archive.
+const options = parseOptions(process.argv.slice(2));
+const limit = readNumber(options, 'limit', Infinity, {min: 1});
+const batchSize = readNumber(options, 'batch', CLASSIFICATION_BATCH_SIZE, {min: 1, max: 100});
+const force = readFlag(options, 'force');
+const dryRun = readFlag(options, 'dry-run');
 const apiKey = process.env.GROQ_API_KEY;
 const model = process.env.GROQ_MODEL ?? 'openai/gpt-oss-120b';
 
 const archive = validateArchive(saved);
 const store = readStore();
-const pending = needsClassification(archive, store, {force}).slice(0, Number.isFinite(limit) ? limit : undefined);
+const pending = needsClassification(archive, store, {force}).slice(0, limit);
 console.log(`Archive ${archive.length} stories · stored ${storeStats(store).records} · pending ${pending.length} · batches of ${batchSize} · model ${model}`);
 
 if (dryRun) {

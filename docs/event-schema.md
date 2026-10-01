@@ -126,7 +126,8 @@ Classification is derived data, never editorial history, and it must be separabl
 
 The model is designed for an archive far larger than today's, so:
 
-- Records are keyed by source URL, so lookups and joins are `O(n)` maps rather than scans.
+- Records are keyed by source URL, so joining a classification to a story is one `O(1)` lookup,
+  and a join over `n` stories is `O(n)` in total rather than a scan per record.
 - Classification runs in fixed-size batches with incremental, atomic writes and resume, so a
   100,000-record archive costs 4,000 resumable calls instead of one unbounded job.
 - Ordering is deterministic everywhere (events sort by date, then id), so page output and reports

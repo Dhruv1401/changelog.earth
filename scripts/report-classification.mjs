@@ -3,10 +3,11 @@
 // level, confidence mix, vocabulary density and cluster candidates. No network, no AI.
 import { calibrationWarnings, classifyArchiveRecords, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classified-archive.mjs';
 import { readStore } from '../lib/classification-store.mjs';
+import { parseOptions, readNumber } from '../lib/cli-options.mjs';
 import { validateArchive } from '../lib/edition-archive.mjs';
 import saved from '../data/editions.json' with { type:'json' };
 
-const perLevel = Number(new URLSearchParams(process.argv.slice(2).join(' ')).get('perLevel') ?? 4);
+const perLevel = readNumber(parseOptions(process.argv.slice(2)), 'perLevel', 4, {min: 1, max: 50});
 const archive = validateArchive(saved);
 const store = readStore();
 const entries = classifyArchiveRecords(archive, store.records);

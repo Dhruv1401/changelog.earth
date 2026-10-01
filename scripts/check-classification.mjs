@@ -6,6 +6,7 @@ import { CLASSIFICATION_BATCH_SIZE, CLASSIFICATION_PROMPT_VERSION, applyClassifi
 import { emptyStore, putRecords, readStore, storeStats, validateStore, writeStore } from '../lib/classification-store.mjs';
 import { CALIBRATION_SAMPLES, calibrationWarnings, classifyArchiveRecords, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classified-archive.mjs';
 import { classifyArticle, DOMAIN_IDS, isChangeType, isDomain, isEvidenceStatus, isScope, isSignificance, SIGNIFICANCE } from '../lib/taxonomy.mjs';
+import { parseOptions, readFlag, readNumber } from '../lib/cli-options.mjs';
 import { validateArchive } from '../lib/edition-archive.mjs';
 import saved from '../data/editions.json' with { type:'json' };
 
@@ -180,4 +181,16 @@ const summaryOnly = classifyArticle({...story('s'), originalTitle:'Reef resilien
 assert.equal(summaryOnly.domain, 'oceans');
 assert.equal(summaryOnly.changeType, 'MEASURED');
 assert.equal(classifyArticle({...story('b'), note:'', summary:''}).evidenceStatus, 'preliminary', 'A headline with no publisher text stays provisional');
+assert.equal(classifyArticle({...story('u'), originalTitle:'Journal article stays unpublished in the archive', note:'', summary:''}).evidenceStatus, 'preliminary', 'An unpublished headline is not a retraction');
+assert.equal(classifyArticle({...story('w'), originalTitle:'Study withdrawn by the journal after review', note:'', summary:''}).evidenceStatus, 'retracted');
+
+// A typo in a flag that spends money per batch must fail before the run starts.
+assert.equal(readFlag(parseOptions(['--force']), 'force'), true);
+assert.equal(readFlag(parseOptions([]), 'force'), false);
+assert.equal(readNumber(parseOptions([]), 'limit', Infinity), Infinity);
+assert.equal(readNumber(parseOptions(['--perLevel=6']), 'perLevel', 4, {min:1, max:50}), 6);
+assert.equal(parseOptions(['--limit=5']).get('limit'), '5');
+for (const [argv, key, bounds] of [[['--limit=abc'], 'limit', {}], [['--limit=-1'], 'limit', {min:1}], [['--batch=0'], 'batch', {min:1}], [['--batch=101'], 'batch', {min:1, max:100}], [['--perLevel=1.5'], 'perLevel', {min:1}]]) {
+ assert.throws(() => readNumber(parseOptions(argv), key, 1, bounds), new RegExp(`Invalid --${key}`), `A bad ${key} must not silently change what runs`);
+}
 console.log('Taxonomy validation, strict classification, retries, provenance, resumable store, derived records and archive immutability pass.');
