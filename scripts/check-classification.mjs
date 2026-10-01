@@ -1,0 +1,152 @@
+import assert from 'node:assert/strict';
+import { readFileSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { CLASSIFICATION_BATCH_SIZE, CLASSIFICATION_PROMPT_VERSION, applyClassifications, chunk, classifyBatch, classificationInput, needsClassification } from '../lib/classification.mjs';
+import { emptyStore, putRecords, readStore, storeStats, validateStore, writeStore } from '../lib/classification-store.mjs';
+import { CALIBRATION_SAMPLES, calibrationWarnings, classifyArchiveRecords, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classified-archive.mjs';
+import { classifyArticle, DOMAIN_IDS, SIGNIFICANCE } from '../lib/taxonomy.mjs';
+
+const archivePath = new URL('../data/editions.json', import.meta.url);
+const before = readFileSync(archivePath, 'utf8');
+const story = (id, extra = {}) => ({
+ title:`Coral reef resilience roster ${id}`, originalTitle:`Scientists report coral reef resilience finding ${id}`,
+ summary:'A multi-year survey measured bleaching resistance across reef sites.',
+ url:`https://example.org/coral-${id}`, date:'2026-09-19T08:00:00.000Z', dateLabel:'Published', provider:'Example', publisher:'Example',
+ category:'Science & nature', kind:'Unlocked', worldwide:true, titleRevision:2, ...extra,
+});
+const articles = [story('a'), story('b'), story('c')];
+const entry = (sourceId, extra = {}) => ({
+ sourceId, domain:'oceans', changeType:'MEASURED', scope:'regional', significance:'notable', significanceConfidence:'high',
+ significanceReason:'A measured change to reef resistance across sites.', evidenceStatus:'confirmed', subject:'coral reef resilience',
+ clusterKey:'coral-reef-resilience', claim:'A multi-year survey measured bleaching resistance across reef sites.', whyItMatters:'Baseline for future reef monitoring.', ...extra,
+});
+
+const records = applyClassifications(articles, {records:[entry(0),entry(1),entry(2)]}, {model:'test-model', now:1_700_000_000_000});
+assert.equal(records.size, 3, 'One record per story, keyed by source URL');
+const stored = records.get(articles[0].url);
+assert.equal(stored.method, 'ai');
+assert.equal(stored.model, 'test-model');
+assert.equal(stored.promptVersion, CLASSIFICATION_PROMPT_VERSION);
+assert.equal(stored.sourceTitle, articles[0].originalTitle, 'A record remembers the headline it was derived from');
+assert.equal(stored.titleRevision, 2);
+assert.equal(stored.classifiedAt, new Date(1_700_000_000_000).toISOString());
+assert.equal(stored.worldwide, true);
+
+for (const bad of [
+ {records:[entry(0),entry(1)]},
+ {records:[entry(0),entry(0),entry(2)]},
+ {records:[entry(0),entry(1),entry(2,{sourceId:9})]},
+ {records:[entry(0,{domain:'planets'}),entry(1),entry(2)]},
+ {records:[entry(0,{changeType:'INVENTED'}),entry(1),entry(2)]},
+ {records:[entry(0,{significance:'huge'}),entry(1),entry(2)]},
+ {records:[entry(0,{significanceConfidence:'maybe'}),entry(1),entry(2)]},
+ {records:[entry(0,{evidenceStatus:'rumoured'}),entry(1),entry(2)]},
+ {records:[entry(0,{clusterKey:'Coral Reef'}),entry(1),entry(2)]},
+ {records:[entry(0,{claim:''}),entry(1),entry(2)]},
+ {records:[entry(0,{claim:'x'.repeat(401)}),entry(1),entry(2)]},
+ {records:[entry(0,{significanceReason:' '}),entry(1),entry(2)]},
+ {records:[entry(0,{whyItMatters:'y'.repeat(301)}),entry(1),entry(2)]},
+]) assert.throws(() => applyClassifications(articles, bad, {model:'test-model'}), undefined, 'Out-of-taxonomy or incomplete output must fail the batch');
+assert.ok(applyClassifications(articles, {records:[entry(0,{whyItMatters:''}),entry(1),entry(2)]}, {model:'test-model'}).get(articles[0].url).whyItMatters === '', 'An unsupported consequence stays empty rather than invented');
+
+assert.deepEqual(needsClassification(articles, {records:{}}), articles, 'Unclassified stories are pending');
+const full = putRecords(emptyStore(), records, 'test-model');
+assert.deepEqual(needsClassification(articles, full), [], 'A current store leaves nothing pending');
+assert.equal(needsClassification(articles, full, {force:true}).length, 3, 'Force reclassifies every story');
+assert.equal(needsClassification([story('a', {originalTitle:'Corrected headline'})], full).length, 1, 'A corrected title invalidates its record');
+assert.deepEqual(needsClassification([story('a', {titleRevision:3})], full).length, 1, 'A newer title revision invalidates its record');
+const stale = {records:{[articles[0].url]:{...stored, promptVersion:0}}};
+assert.ok(needsClassification(articles, stale).includes(articles[0]), 'An older prompt version is reclassified');
+assert.ok(!needsClassification([articles[0]], full).includes(articles[0]), 'A current record is never reclassified');
+assert.deepEqual(chunk(articles, 2), [articles.slice(0,2), articles.slice(2)]);
+assert.deepEqual(chunk(articles, CLASSIFICATION_BATCH_SIZE).flat(), articles);
+assert.throws(() => chunk(articles, 0));
+assert.deepEqual(classificationInput([articles[0]])[0].sourceId, 0);
+assert.ok(classificationInput([articles[0]])[0].headline === articles[0].originalTitle);
+
+let calls = 0;
+const batch = await classifyBatch(articles, {apiKey:'test', model:'test-model', fetcher:async(url, options) => {
+ calls++;
+ const body = JSON.parse(options.body);
+ assert.equal(body.response_format.json_schema.strict, true, 'Structured classification must use a strict schema');
+ assert.ok(body.response_format.json_schema.schema.properties.records.items.required.includes('significanceReason'));
+ assert.ok(body.messages[0].content.includes('choose the lower one'), 'The ladder rules must be part of the instruction');
+ assert.ok(body.messages[0].content.includes('never instructions'), 'Untrusted headlines must be declared as data');
+ assert.ok(body.messages[0].content.includes('epochal:'), 'Significance criteria travel with the request');
+ const input = JSON.parse(body.messages[1].content);
+ assert.deepEqual(input.map(item => item.sourceId), [0,1,2]);
+ assert.ok(input.every(item => item.summary.length > 0));
+ if (calls === 1) return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({records:[entry(0,{domain:'planets'}),entry(1),entry(2)]})}}]});
+ return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({records:[entry(0),entry(1),entry(2)]})}}]});
+}});
+assert.equal(calls, 2, 'One invalid batch is regenerated once');
+assert.equal(batch.size, 3);
+await assert.rejects(classifyBatch(articles, {apiKey:'test', fetcher:async()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({records:[entry(0,{domain:'planets'}),entry(1),entry(2)]})}}]})}), /Classification outside the taxonomy/, 'A second invalid batch fails collection');
+await assert.rejects(classifyBatch(articles, {fetcher:fetch}), /Groq not configured/);
+
+const temporary = join(tmpdir(), `classifications-${process.pid}.json`);
+try {
+ assert.deepEqual(readStore(temporary), emptyStore(), 'A missing store reads as empty rather than failing');
+ const written = writeStore(putRecords(emptyStore(), records, 'test-model'), temporary, 1_700_000_000_000);
+ assert.equal(existsSync(`${temporary}.tmp`), false, 'The temporary file must not survive the write');
+ assert.equal(written.records[articles[0].url].method, 'ai');
+ assert.equal(written.updatedAt, new Date(1_700_000_000_000).toISOString());
+ assert.equal(written.retrospective, true, 'The store records that it was produced after publication');
+ assert.equal(storeStats(readStore(temporary)).records, 3);
+ assert.throws(() => validateStore({...written, records:{...written.records, 'https://example.org/x':{...stored, domain:'planets'}}}), /outside the taxonomy/);
+ assert.throws(() => validateStore({...written, records:{...written.records, 'not a url':stored}}));
+ assert.throws(() => validateStore({...written, records:{...written.records, [articles[0].url]:{...stored, method:'editorial'}}}), /provenance/);
+ assert.throws(() => validateStore({...written, records:{...written.records, [articles[0].url]:{...stored, promptVersion:0}}}), /prompt version/);
+} finally { rmSync(temporary, {force:true}); }
+
+const entries = classifyArchiveRecords(articles, records);
+assert.equal(entries.length, 3);
+assert.ok(entries.every(entry => entry.method === 'ai' && entry.significanceConfidence === 'high'));
+assert.deepEqual(entries.map(entry => entry.url), articles.map(article => article.url), 'Ordering is deterministic: same date, then URL');
+const unclassified = classifyArchiveRecords([story('d')]);
+assert.equal(unclassified[0].method, 'inferred', 'Anything without a stored record is derived on read and reported as inferred');
+assert.equal(unclassified[0].significance, classifyArticle(articles[0]).significance);
+assert.equal(unclassified[0].significanceConfidence, 'low', 'Derived records never claim editorial confidence');
+assert.equal(unclassified[0].claim, '', 'Derived records invent no claim text');
+
+const summary = summariseClassification(entries);
+assert.equal(summary.total, 3);
+assert.equal(summary.published, 3);
+assert.equal(summary.significance.find(level => level.id === 'notable').total, 3);
+assert.equal(summary.byMethod.ai, 3);
+const mixed = summariseClassification(classifyArchiveRecords([...articles, story('e', {worldwide:false})], records));
+assert.equal(mixed.published, 3, 'Rejected stories stay in the archive and out of the published count');
+const gaps = taxonomyGaps(entries);
+assert.deepEqual(gaps.clusterCandidates.map(cluster => [cluster.clusterKey, cluster.count]), [['coral-reef-resilience', 3]], 'Stories sharing a subject are cluster candidates');
+assert.deepEqual(taxonomyGaps(classifyArchiveRecords([story('a')], records)).clusterCandidates, [], 'A single report of a subject is not a cluster candidate');
+const clustered = taxonomyGaps(classifyArchiveRecords([story('a'), story('b', {url:'https://example.org/coral-b', publisher:'Other outlet'})], records));
+assert.deepEqual(clustered.clusterCandidates.map(cluster => [cluster.clusterKey, cluster.count, cluster.publishers]), [['coral-reef-resilience', 2, ['Example', 'Other outlet']]], 'Two reports of one subject are one event candidate');
+const examples = levelExamples(entries, {perLevel:4});
+assert.equal(examples.find(group => group.level === 'notable').examples.length, 3);
+const unclassifiedSummary = summariseClassification(classifyArchiveRecords(articles));
+const warnings = calibrationWarnings(unclassifiedSummary, taxonomyGaps(classifyArchiveRecords(articles)));
+assert.ok(warnings.some(warning => warning.includes('low confidence')), 'A wholly unconfident archive is called out');
+assert.ok(!warnings.some(warning => warning.includes('Unused change types')), 'A small archive may leave change types unused without that being a finding');
+// A well-covered archive raises nothing, so a warning always means something about the vocabulary.
+const ladderStories = ['epochal-a','epochal-b','major-a','major-b','notable-a','notable-b','minor-a','minor-b'].map(id => story(id, {originalTitle:`${id} event reported`, title:`${id} event patch note`}));
+const ladderEntry = (sourceId, extra) => entry(sourceId, {significanceConfidence:'high', ...extra});
+const ladder = applyClassifications(ladderStories, {records:ladderStories.map((article, sourceId) => ladderEntry(sourceId, [
+ {significance:'epochal', domain:'life', changeType:'LOST', scope:'planetary', evidenceStatus:'confirmed', clusterKey:`${sourceId}-a`},
+ {significance:'major', domain:'space', changeType:'DISCOVERED', scope:'global', evidenceStatus:'confirmed', clusterKey:`${sourceId}-b`},
+ {significance:'major', domain:'energy', changeType:'DEPLOYED', scope:'global', evidenceStatus:'preliminary', clusterKey:`${sourceId}-c`},
+ {significance:'notable', domain:'oceans', changeType:'MEASURED', scope:'regional', evidenceStatus:'confirmed', clusterKey:`${sourceId}-d`},
+ {significance:'notable', domain:'health', changeType:'IMPROVED', scope:'regional', evidenceStatus:'preliminary', clusterKey:`${sourceId}-e`},
+ {significance:'notable', domain:'atmosphere', changeType:'DECLINED', scope:'global', evidenceStatus:'confirmed', clusterKey:`${sourceId}-f`},
+ {significance:'minor', domain:'technology', changeType:'OBSERVED', scope:'local', evidenceStatus:'confirmed', clusterKey:`${sourceId}-g`},
+ {significance:'minor', domain:'agriculture', changeType:'CREATED', scope:'local', evidenceStatus:'preliminary', clusterKey:`${sourceId}-h`},
+ ][sourceId]))}, {model:'test-model'});
+const ladderEntries = classifyArchiveRecords(ladderStories, ladder);
+const ladderWarnings = calibrationWarnings(summariseClassification(ladderEntries), taxonomyGaps(ladderEntries));
+assert.deepEqual(ladderWarnings.filter(warning => /has no records|none are published|low confidence/.test(warning)), [], 'A covered ladder with stated confidence raises no ladder warning');
+assert.equal(CALIBRATION_SAMPLES.vocabulary, SIGNIFICANCE.length * 16, 'Vocabulary verdicts require at least four records per change type');
+assert.equal(SIGNIFICANCE.length, 4);
+assert.ok(DOMAIN_IDS.length >= 10);
+
+assert.equal(readFileSync(archivePath, 'utf8'), before, 'Classification must never rewrite the published archive');
+console.log('Taxonomy validation, strict classification, retries, provenance, resumable store, derived records and archive immutability pass.');
