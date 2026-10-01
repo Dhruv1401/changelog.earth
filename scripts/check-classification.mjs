@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { CLASSIFICATION_BATCH_SIZE, CLASSIFICATION_PROMPT_VERSION, applyClassifications, chunk, classifyBatch, classificationInput, needsClassification } from '../lib/classification.mjs';
 import { emptyStore, putRecords, readStore, storeStats, validateStore, writeStore } from '../lib/classification-store.mjs';
 import { CALIBRATION_SAMPLES, calibrationWarnings, classifyArchiveRecords, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classified-archive.mjs';
-import { classifyArticle, DOMAIN_IDS, SIGNIFICANCE } from '../lib/taxonomy.mjs';
+import { classifyArticle, DOMAIN_IDS, isChangeType, isDomain, isEvidenceStatus, isScope, isSignificance, SIGNIFICANCE } from '../lib/taxonomy.mjs';
+import { validateArchive } from '../lib/edition-archive.mjs';
+import saved from '../data/editions.json' with { type:'json' };
 
 const archivePath = new URL('../data/editions.json', import.meta.url);
 const before = readFileSync(archivePath, 'utf8');
@@ -66,8 +68,9 @@ assert.deepEqual(classificationInput([articles[0]])[0].sourceId, 0);
 assert.ok(classificationInput([articles[0]])[0].headline === articles[0].originalTitle);
 
 let calls = 0;
+const signals = [];
 const batch = await classifyBatch(articles, {apiKey:'test', model:'test-model', fetcher:async(url, options) => {
- calls++;
+ calls++; signals.push(options.signal);
  const body = JSON.parse(options.body);
  assert.equal(body.response_format.json_schema.strict, true, 'Structured classification must use a strict schema');
  assert.ok(body.response_format.json_schema.schema.properties.records.items.required.includes('significanceReason'));
@@ -81,7 +84,12 @@ const batch = await classifyBatch(articles, {apiKey:'test', model:'test-model', 
  return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({records:[entry(0),entry(1),entry(2)]})}}]});
 }});
 assert.equal(calls, 2, 'One invalid batch is regenerated once');
+assert.notEqual(signals[0], signals[1], 'Each attempt needs its own timeout signal');
+assert.ok(signals.every(signal => !signal.aborted), 'A regeneration must never start against an aborted signal');
 assert.equal(batch.size, 3);
+let ticks = 0, exhausted = 0;
+await assert.rejects(classifyBatch(articles, {apiKey:'test', clock:()=>{ticks++; return ticks > 1 ? 5_000 : 0;}, batchTimeoutMs:100, fetcher:async()=>{exhausted++; return Response.json({});}}), /deadline exceeded/, 'An exhausted batch deadline stops the batch');
+assert.equal(exhausted, 0, 'An exhausted deadline must not spend another request');
 await assert.rejects(classifyBatch(articles, {apiKey:'test', fetcher:async()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({records:[entry(0,{domain:'planets'}),entry(1),entry(2)]})}}]})}), /Classification outside the taxonomy/, 'A second invalid batch fails collection');
 await assert.rejects(classifyBatch(articles, {fetcher:fetch}), /Groq not configured/);
 
@@ -96,13 +104,22 @@ try {
  assert.equal(storeStats(readStore(temporary)).records, 3);
  assert.throws(() => validateStore({...written, records:{...written.records, 'https://example.org/x':{...stored, domain:'planets'}}}), /outside the taxonomy/);
  assert.throws(() => validateStore({...written, records:{...written.records, 'not a url':stored}}));
- assert.throws(() => validateStore({...written, records:{...written.records, [articles[0].url]:{...stored, method:'editorial'}}}), /provenance/);
- assert.throws(() => validateStore({...written, records:{...written.records, [articles[0].url]:{...stored, promptVersion:0}}}), /prompt version/);
+assert.throws(() => validateStore({...written, records:{...written.records, [articles[0].url]:{...stored, method:'editorial'}}}), /provenance/);
+for (const bad of [0, -1, 'x', undefined]) assert.throws(() => validateStore({...written, records:{...written.records, [articles[0].url]:{...stored, promptVersion:bad}}}), /prompt version/);
+// A prompt upgrade must stay resumable: older records load, and staleness is decided per record.
+assert.ok(validateStore({...written, records:{...written.records, [articles[0].url]:{...stored, promptVersion:CLASSIFICATION_PROMPT_VERSION + 7}}}), 'A prompt upgrade must not make the store unreadable');
+assert.deepEqual(needsClassification([articles[0]], full, {promptVersion:CLASSIFICATION_PROMPT_VERSION + 1}), [articles[0]], 'A bumped prompt version invalidates its record without blocking the rest');
 } finally { rmSync(temporary, {force:true}); }
 
 const entries = classifyArchiveRecords(articles, records);
 assert.equal(entries.length, 3);
-assert.ok(entries.every(entry => entry.method === 'ai' && entry.significanceConfidence === 'high'));
+assert.ok(entries.every(entry => entry.method === 'ai' && entry.significanceConfidence === 'high' && entry.stale === false));
+const corrected = classifyArchiveRecords([story('a', {originalTitle:'Corrected headline'})], records);
+assert.equal(corrected[0].method, 'inferred', 'A record derived from a corrected headline is not trusted');
+assert.equal(corrected[0].stale, true, 'A stale record is reported as stale rather than hidden');
+assert.equal(corrected[0].significanceConfidence, 'low');
+const bumped = classifyArchiveRecords([story('a')], new Map([[articles[0].url, {...stored, sourceTitle:'Coral reef resilience', titleRevision:1}]]));
+assert.equal(bumped[0].stale, true, 'A newer title revision invalidates the record on read as well');
 assert.deepEqual(entries.map(entry => entry.url), articles.map(article => article.url), 'Ordering is deterministic: same date, then URL');
 const unclassified = classifyArchiveRecords([story('d')]);
 assert.equal(unclassified[0].method, 'inferred', 'Anything without a stored record is derived on read and reported as inferred');
@@ -149,4 +166,18 @@ assert.equal(SIGNIFICANCE.length, 4);
 assert.ok(DOMAIN_IDS.length >= 10);
 
 assert.equal(readFileSync(archivePath, 'utf8'), before, 'Classification must never rewrite the published archive');
+
+// Every value the fallback can produce must exist in the declared vocabulary, for the real archive.
+for (const article of validateArchive(saved)) {
+ const fields = classifyArticle(article);
+ assert.ok(isDomain(fields.domain) && isChangeType(fields.changeType) && isScope(fields.scope) && isSignificance(fields.significance) && isEvidenceStatus(fields.evidenceStatus), `Inferred classification left the taxonomy for ${article.url}`);
+}
+const retracted = classifyArticle({...story('r'), originalTitle:'Study retracted after the data could not be verified', note:'', summary:''});
+assert.equal(retracted.evidenceStatus, 'retracted', 'A withdrawal is an evidence status');
+assert.ok(isChangeType(retracted.changeType), 'A withdrawal must not invent a change type');
+// The fallback reads the publisher summary, which is the strongest text an archived story carries.
+const summaryOnly = classifyArticle({...story('s'), originalTitle:'Reef resilience survey', title:'Reef resilience survey', note:'', summary:'Survey teams measured coral reef bleaching resistance across sites in the region.'});
+assert.equal(summaryOnly.domain, 'oceans');
+assert.equal(summaryOnly.changeType, 'MEASURED');
+assert.equal(classifyArticle({...story('b'), note:'', summary:''}).evidenceStatus, 'preliminary', 'A headline with no publisher text stays provisional');
 console.log('Taxonomy validation, strict classification, retries, provenance, resumable store, derived records and archive immutability pass.');
