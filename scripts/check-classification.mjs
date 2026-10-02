@@ -113,11 +113,20 @@ const temporary = join(tmpdir(), `classifications-${process.pid}.json`);
 try {
  assert.deepEqual(readStore(temporary), emptyStore(), 'A missing store reads as empty rather than failing');
  const written = writeStore(putRecords(emptyStore(), records, 'test-model'), temporary, 1_700_000_000_000);
- assert.equal(existsSync(`${temporary}.tmp`), false, 'The temporary file must not survive the write');
+ assert.equal(existsSync(`${temporary}.${process.pid}.tmp`), false, 'The temporary file must not survive the write');
+assert.equal(existsSync(`${temporary}.lock`), false, 'The lock must not survive the write');
  assert.equal(written.records[articles[0].url].method, 'ai');
  assert.equal(written.updatedAt, new Date(1_700_000_000_000).toISOString());
  assert.equal(written.retrospective, true, 'The store records that it was produced after publication');
  assert.equal(storeStats(readStore(temporary)).records, 3);
+ // Two runs can overlap: this write comes from a base read before the batch above was stored, so
+ // it must keep that batch instead of overwriting a snapshot that never saw it.
+ const late = new Map([['https://example.org/late', {...stored, sourceTitle:'Coral reef resilience'}]]);
+ writeStore(putRecords(emptyStore(), late, 'test-model'), temporary, 1_700_000_000_001);
+ const merged = readStore(temporary);
+ assert.equal(Object.keys(merged.records).length, 4, 'A write from a stale base keeps what another run committed');
+ assert.ok(merged.records[articles[0].url], 'The earlier batch survives the later write');
+ assert.ok(merged.records['https://example.org/late'], 'The later batch is stored');
  // The default store path is a URL: writing through one must resolve to a real file instead of
  // throwing after the model call and dropping the batch.
  assert.match(fileURLToPath(STORE_PATH), /data[\\/]classifications\.json$/);
