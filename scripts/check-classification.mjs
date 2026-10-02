@@ -9,7 +9,8 @@ import { CLASSIFICATION_PROMPT_VERSION, classificationInstruction, classificatio
 import { applyClassifications, classificationInput } from '../lib/classification-records.mjs';
 import { emptyStore, putRecords, readStore, STORE_PATH, storeStats, validateStore, writeStore } from '../lib/classification-store.mjs';
 import { CALIBRATION_SAMPLES, calibrationWarnings, classifyArchiveRecords, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classified-archive.mjs';
-import { classifyArticle, DOMAIN_IDS, isChangeType, isDomain, isEvidenceStatus, isScope, isSignificance, SIGNIFICANCE } from '../lib/taxonomy.mjs';
+import { DOMAIN_IDS, isChangeType, isDomain, isEvidenceStatus, isScope, isSignificance, SIGNIFICANCE } from '../lib/taxonomy.mjs';
+import { classifyArticle } from '../lib/taxonomy-fallback.mjs';
 import { parseOptions, readFlag, readNumber } from '../lib/cli-options.mjs';
 import { validateArchive } from '../lib/edition-archive.mjs';
 import saved from '../data/editions.json' with { type:'json' };

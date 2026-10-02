@@ -117,7 +117,7 @@ Classification is derived data, never editorial history, and it must be separabl
 - Every record stores the headline and `titleRevision` it was derived from, so a corrected title
   is detectable and reclassifiable instead of silently mismatched.
 - Records are marked `method: "ai"` or `method: "inferred"`. Anything without a stored record is
-  derived on read by [`classifyArticle`](../lib/taxonomy.mjs) and reported as `inferred`.
+  derived on read by [`classifyArticle`](../lib/taxonomy-fallback.mjs) and reported as `inferred`.
 - The store is **retrospective**: it was produced after publication from the saved headline and
   publisher summary. Nothing in it may be presented as a decision made at publication time.
 - Regenerating the store must never modify `data/editions.json`.
