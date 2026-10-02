@@ -204,8 +204,9 @@ const summaryOnly = classifyArticle({...story('s'), originalTitle:'Reef resilien
 assert.equal(summaryOnly.domain, 'oceans');
 assert.equal(summaryOnly.changeType, 'MEASURED');
 assert.equal(summaryOnly.evidenceStatus, 'preliminary', 'A publisher summary is reporting, not corroboration');
+// Inference has no positive path to confirmed: it can spot doubt, never corroborate.
 const replicated = classifyArticle({...story('p'), originalTitle:'Independently replicated result strengthens the finding', title:'Independently replicated result strengthens the finding', summary:'The finding survived an independent replication.'});
-assert.equal(replicated.evidenceStatus, 'confirmed', 'Text that states stronger certainty can still be confirmed');
+assert.equal(replicated.evidenceStatus, 'preliminary', 'Only the model can record confirmed, because only the model reads the reporting itself');
 assert.equal(classifyArticle({...story('b'), note:'', summary:''}).evidenceStatus, 'preliminary', 'A headline with no publisher text stays provisional');
 assert.equal(classifyArticle({...story('u'), originalTitle:'Journal article stays unpublished in the archive', note:'', summary:''}).evidenceStatus, 'preliminary', 'An unpublished headline is not a retraction');
 assert.equal(classifyArticle({...story('w'), originalTitle:'Study withdrawn by the journal after review', note:'', summary:''}).evidenceStatus, 'retracted');

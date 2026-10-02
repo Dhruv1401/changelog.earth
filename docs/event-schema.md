@@ -143,18 +143,6 @@ The model is designed for an archive far larger than today's, so:
 distribution, examples at each level, confidence mix per level, domain × change-type density, and
 cluster candidates. Those numbers are the only accepted argument for changing a label.
 
-Two limits of the deterministic fallback bound what those numbers can mean until stored records
-exist:
-
-- Its significance score tops out at five (scope 3 + change weight 2, with no second source), so
-  `epochal`, which needs six, is unreachable for inferred records. An empty `epochal` row says
-  nothing about the ladder until saved classifications exist to check it against.
-- Scope is read partly from the worldwide-relevance gate, and scope feeds significance, so the
-  absence of published `minor` records comes partly from the publication rules rather than from
-  the archive.
-
-The distribution is therefore what the vocabulary has to survive, not a picture of the planet.
-
 Deliberately unanswered until the archive answers them:
 
 - whether Earth observation is a domain of its own or a topic inside general science, which is
