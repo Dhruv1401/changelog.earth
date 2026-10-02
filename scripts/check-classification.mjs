@@ -8,7 +8,8 @@ import { CLASSIFICATION_BATCH_SIZE, chunk, classifyBatch, needsClassification } 
 import { CLASSIFICATION_PROMPT_VERSION, classificationInstruction, classificationSchema } from '../lib/classification-prompt.mjs';
 import { applyClassifications, classificationInput } from '../lib/classification-records.mjs';
 import { emptyStore, putRecords, readStore, STORE_PATH, storeStats, validateStore, writeStore } from '../lib/classification-store.mjs';
-import { CALIBRATION_SAMPLES, calibrationWarnings, classifyArchiveRecords, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classified-archive.mjs';
+import { classifyArchiveRecords } from '../lib/classified-archive.mjs';
+import { CALIBRATION_SAMPLES, calibrationWarnings, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classification-report.mjs';
 import { DOMAIN_IDS, isChangeType, isDomain, isEvidenceStatus, isScope, isSignificance, SIGNIFICANCE } from '../lib/taxonomy.mjs';
 import { classifyArticle } from '../lib/taxonomy-fallback.mjs';
 import { parseOptions, readFlag, readNumber } from '../lib/cli-options.mjs';
@@ -176,11 +177,16 @@ assert.equal(summary.significance.find(level => level.id === 'notable').total, 3
 assert.equal(summary.byMethod.ai, 3);
 const mixed = summariseClassification(classifyArchiveRecords([...articles, story('e', {worldwide:false})], records));
 assert.equal(mixed.published, 3, 'Rejected stories stay in the archive and out of the published count');
-const gaps = taxonomyGaps(entries);
+const gaps = taxonomyGaps(entries, summary);
 assert.deepEqual(gaps.clusterCandidates.map(cluster => [cluster.clusterKey, cluster.count]), [['coral-reef-resilience', 3]], 'Stories sharing a subject are cluster candidates');
 assert.deepEqual(taxonomyGaps(classifyArchiveRecords([story('a')], records)).clusterCandidates, [], 'A single report of a subject is not a cluster candidate');
 const clustered = taxonomyGaps(classifyArchiveRecords([story('a'), story('b', {url:'https://example.org/coral-b', publisher:'Other outlet'})], records));
 assert.deepEqual(clustered.clusterCandidates.map(cluster => [cluster.clusterKey, cluster.count, cluster.publishers]), [['coral-reef-resilience', 2, ['Example', 'Other outlet']]], 'Two reports of one subject are one event candidate');
+// A caller that already has the summary must not pay for the pass twice, and the gaps must be the
+// ones that summary describes rather than a second, independently derived set of numbers.
+const reused = taxonomyGaps(entries, summary);
+assert.deepEqual(reused.levels, gaps.levels, 'Gaps computed from a passed summary match gaps computed from scratch');
+assert.deepEqual(taxonomyGaps(entries).levels, reused.levels, 'The summary argument is optional and does not change the result');
 const examples = levelExamples(entries, {perLevel:4});
 assert.equal(examples.find(group => group.level === 'notable').examples.length, 3);
 const unclassifiedSummary = summariseClassification(classifyArchiveRecords(articles));
@@ -202,7 +208,8 @@ const ladder = applyClassifications(ladderStories, {records:ladderStories.map((a
  {significance:'minor', domain:'agriculture', changeType:'CREATED', scope:'local', evidenceStatus:'preliminary', clusterKey:`${sourceId}-h`},
  ][sourceId]))}, {model:'test-model'});
 const ladderEntries = classifyArchiveRecords(ladderStories, ladder);
-const ladderWarnings = calibrationWarnings(summariseClassification(ladderEntries), taxonomyGaps(ladderEntries));
+const ladderSummary = summariseClassification(ladderEntries);
+const ladderWarnings = calibrationWarnings(ladderSummary, taxonomyGaps(ladderEntries, ladderSummary));
 assert.deepEqual(ladderWarnings.filter(warning => /has no records|none are published|low confidence/.test(warning)), [], 'A covered ladder with stated confidence raises no ladder warning');
 assert.equal(CALIBRATION_SAMPLES.vocabulary, SIGNIFICANCE.length * 16, 'Vocabulary verdicts require at least four records per change type');
 assert.equal(SIGNIFICANCE.length, 4);

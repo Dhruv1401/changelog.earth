@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Validates the draft taxonomy against the saved archive: level distribution, examples at each
 // level, confidence mix, vocabulary density and cluster candidates. No network, no AI.
-import { calibrationWarnings, classifyArchiveRecords, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classified-archive.mjs';
+import { classifyArchiveRecords } from '../lib/classified-archive.mjs';
+import { calibrationWarnings, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classification-report.mjs';
 import { readStore } from '../lib/classification-store.mjs';
 import { parseOptions, readNumber } from '../lib/cli-options.mjs';
 import { validateArchive } from '../lib/edition-archive.mjs';
@@ -12,7 +13,8 @@ const archive = validateArchive(saved);
 const store = readStore();
 const entries = classifyArchiveRecords(archive, store.records);
 const summary = summariseClassification(entries);
-const gaps = taxonomyGaps(entries);
+// The summary is handed on rather than rebuilt, so one run walks the archive once for the counts.
+const gaps = taxonomyGaps(entries, summary);
 // Share as a percentage string.
 const pct = share => `${(share * 100).toFixed(1)}%`;
 // A fixed-width bar, scaled to the largest row in its block.
