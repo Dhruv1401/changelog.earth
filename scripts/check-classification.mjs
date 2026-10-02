@@ -98,6 +98,14 @@ await assert.rejects(classifyBatch(articles, {apiKey:'test', clock:()=>{ticks++;
 assert.equal(exhausted, 0, 'An exhausted deadline must not spend another request');
 await assert.rejects(classifyBatch(articles, {apiKey:'test', fetcher:async()=>Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({records:[entry(0,{domain:'planets'}),entry(1),entry(2)]})}}]})}), /Classification outside the taxonomy/, 'A second invalid batch fails collection');
 await assert.rejects(classifyBatch(articles, {fetcher:fetch}), /Groq not configured/);
+// The provider validates the strict schema itself, so a rejected generation never reaches
+// applyClassifications: it has to regenerate once like any other invalid output.
+let rejected = 0;
+const regenerated = await classifyBatch(articles, {apiKey:'test', fetcher:async()=>++rejected===1 ? Response.json({error:{message:'Generated JSON does not match the expected schema.', code:'json_validate_failed', type:'invalid_request_error'}}, {status:400}) : Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({records:[entry(0),entry(1),entry(2)]})}}]})});
+assert.equal(rejected, 2, 'A generation the provider rejects regenerates the batch once');
+assert.equal(regenerated.size, 3);
+await assert.rejects(classifyBatch(articles, {apiKey:'test', fetcher:async()=>Response.json({error:{code:'json_validate_failed', message:'still invalid'}}, {status:400})}), /Groq HTTP 400 json_validate_failed/, 'A second schema rejection fails the batch');
+await assert.rejects(classifyBatch(articles, {apiKey:'test', fetcher:async()=>Response.json({error:{code:'rate_limit_exceeded'}}, {status:429})}), /Groq HTTP 429 rate_limit_exceeded/, 'A provider failure that is not a rejected generation is still fatal');
 
 const temporary = join(tmpdir(), `classifications-${process.pid}.json`);
 try {
