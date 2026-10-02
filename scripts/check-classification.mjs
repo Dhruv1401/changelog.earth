@@ -14,6 +14,7 @@ import saved from '../data/editions.json' with { type:'json' };
 
 const archivePath = new URL('../data/editions.json', import.meta.url);
 const before = readFileSync(archivePath, 'utf8');
+// Fixture story: headline, summary and the provenance fields a record has to match.
 const story = (id, extra = {}) => ({
  title:`Coral reef resilience roster ${id}`, originalTitle:`Scientists report coral reef resilience finding ${id}`,
  summary:'A multi-year survey measured bleaching resistance across reef sites.',
@@ -21,6 +22,7 @@ const story = (id, extra = {}) => ({
  category:'Science & nature', kind:'Unlocked', worldwide:true, titleRevision:2, ...extra,
 });
 const articles = [story('a'), story('b'), story('c')];
+// Fixture classification record, overridable field by field.
 const entry = (sourceId, extra = {}) => ({
  sourceId, domain:'oceans', changeType:'MEASURED', scope:'regional', significance:'notable', significanceConfidence:'high',
  significanceReason:'A measured change to reef resistance across sites.', evidenceStatus:'confirmed', subject:'coral reef resilience',
@@ -168,6 +170,7 @@ assert.ok(warnings.some(warning => warning.includes('low confidence')), 'A wholl
 assert.ok(!warnings.some(warning => warning.includes('Unused change types')), 'A small archive may leave change types unused without that being a finding');
 // A well-covered archive raises nothing, so a warning always means something about the vocabulary.
 const ladderStories = ['epochal-a','epochal-b','major-a','major-b','notable-a','notable-b','minor-a','minor-b'].map(id => story(id, {originalTitle:`${id} event reported`, title:`${id} event patch note`}));
+// A stored entry for the ladder-coverage fixture.
 const ladderEntry = (sourceId, extra) => entry(sourceId, {significanceConfidence:'high', ...extra});
 const ladder = applyClassifications(ladderStories, {records:ladderStories.map((article, sourceId) => ladderEntry(sourceId, [
  {significance:'epochal', domain:'life', changeType:'LOST', scope:'planetary', evidenceStatus:'confirmed', clusterKey:`${sourceId}-a`},

@@ -13,9 +13,12 @@ const store = readStore();
 const entries = classifyArchiveRecords(archive, store.records);
 const summary = summariseClassification(entries);
 const gaps = taxonomyGaps(entries);
+// Share as a percentage string.
 const pct = share => `${(share * 100).toFixed(1)}%`;
+// A fixed-width bar, scaled to the largest row in its block.
 const bar = (total, max) => '█'.repeat(Math.max(1, Math.round((total / Math.max(1, max)) * 24)));
 
+// Prints one labelled block of vocabulary rows.
 const rows = (label, list) => {
  const max = Math.max(...list.map(row => row.total), 1);
  console.log(`\n${label}`);
