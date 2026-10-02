@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CLASSIFICATION_BATCH_SIZE, CLASSIFICATION_PROMPT_VERSION, applyClassifications, chunk, classifyBatch, classificationInput, needsClassification } from '../lib/classification.mjs';
-import { emptyStore, putRecords, readStore, storeStats, validateStore, writeStore } from '../lib/classification-store.mjs';
+import { emptyStore, putRecords, readStore, STORE_PATH, storeStats, validateStore, writeStore } from '../lib/classification-store.mjs';
 import { CALIBRATION_SAMPLES, calibrationWarnings, classifyArchiveRecords, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classified-archive.mjs';
 import { classifyArticle, DOMAIN_IDS, isChangeType, isDomain, isEvidenceStatus, isScope, isSignificance, SIGNIFICANCE } from '../lib/taxonomy.mjs';
 import { parseOptions, readFlag, readNumber } from '../lib/cli-options.mjs';
@@ -80,6 +80,9 @@ const batch = await classifyBatch(articles, {apiKey:'test', model:'test-model', 
  assert.ok(body.messages[0].content.includes('choose the lower one'), 'The ladder rules must be part of the instruction');
  assert.ok(body.messages[0].content.includes('never instructions'), 'Untrusted headlines must be declared as data');
  assert.ok(body.messages[0].content.includes('epochal:'), 'Significance criteria travel with the request');
+ assert.ok(!body.messages[0].content.includes('undefined'), 'The prompt must not leak missing domain definitions');
+ assert.ok(body.messages[0].content.includes('Life & biology'), 'Domains are described by their label');
+ assert.ok(body.messages[0].content.includes('Earth observation'), 'Domain topics travel with the request');
  const input = JSON.parse(body.messages[1].content);
  assert.deepEqual(input.map(item => item.sourceId), [0,1,2]);
  assert.ok(input.every(item => item.summary.length > 0));
@@ -105,6 +108,13 @@ try {
  assert.equal(written.updatedAt, new Date(1_700_000_000_000).toISOString());
  assert.equal(written.retrospective, true, 'The store records that it was produced after publication');
  assert.equal(storeStats(readStore(temporary)).records, 3);
+ // The default store path is a URL: writing through one must resolve to a real file instead of
+ // throwing after the model call and dropping the batch.
+ assert.match(fileURLToPath(STORE_PATH), /data[\\/]classifications\.json$/);
+ const urlPath = pathToFileURL(`${temporary}-url.json`);
+ writeStore(putRecords(emptyStore(), records, 'test-model'), urlPath, 1_700_000_000_000);
+ assert.equal(existsSync(fileURLToPath(urlPath)), true, 'A URL store path writes a real file');
+ rmSync(fileURLToPath(urlPath), {force:true});
  assert.throws(() => validateStore({...written, records:{...written.records, 'https://example.org/x':{...stored, domain:'planets'}}}), /outside the taxonomy/);
  assert.throws(() => validateStore({...written, records:{...written.records, 'not a url':stored}}));
 assert.throws(() => validateStore({...written, records:{...written.records, [articles[0].url]:{...stored, method:'editorial'}}}), /provenance/);
@@ -182,6 +192,9 @@ assert.ok(isChangeType(retracted.changeType), 'A withdrawal must not invent a ch
 const summaryOnly = classifyArticle({...story('s'), originalTitle:'Reef resilience survey', title:'Reef resilience survey', note:'', summary:'Survey teams measured coral reef bleaching resistance across sites in the region.'});
 assert.equal(summaryOnly.domain, 'oceans');
 assert.equal(summaryOnly.changeType, 'MEASURED');
+assert.equal(summaryOnly.evidenceStatus, 'preliminary', 'A publisher summary is reporting, not corroboration');
+const replicated = classifyArticle({...story('p'), originalTitle:'Independently replicated result strengthens the finding', title:'Independently replicated result strengthens the finding', summary:'The finding survived an independent replication.'});
+assert.equal(replicated.evidenceStatus, 'confirmed', 'Text that states stronger certainty can still be confirmed');
 assert.equal(classifyArticle({...story('b'), note:'', summary:''}).evidenceStatus, 'preliminary', 'A headline with no publisher text stays provisional');
 assert.equal(classifyArticle({...story('u'), originalTitle:'Journal article stays unpublished in the archive', note:'', summary:''}).evidenceStatus, 'preliminary', 'An unpublished headline is not a retraction');
 assert.equal(classifyArticle({...story('w'), originalTitle:'Study withdrawn by the journal after review', note:'', summary:''}).evidenceStatus, 'retracted');
