@@ -4,7 +4,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CLASSIFICATION_BATCH_SIZE, CLASSIFICATION_PROMPT_VERSION, applyClassifications, chunk, classifyBatch, classificationInput, needsClassification } from '../lib/classification.mjs';
+import { CLASSIFICATION_BATCH_SIZE, chunk, classifyBatch, needsClassification } from '../lib/classification.mjs';
+import { CLASSIFICATION_PROMPT_VERSION, classificationInstruction, classificationSchema } from '../lib/classification-prompt.mjs';
+import { applyClassifications, classificationInput } from '../lib/classification-records.mjs';
 import { emptyStore, putRecords, readStore, STORE_PATH, storeStats, validateStore, writeStore } from '../lib/classification-store.mjs';
 import { CALIBRATION_SAMPLES, calibrationWarnings, classifyArchiveRecords, levelExamples, summariseClassification, taxonomyGaps } from '../lib/classified-archive.mjs';
 import { classifyArticle, DOMAIN_IDS, isChangeType, isDomain, isEvidenceStatus, isScope, isSignificance, SIGNIFICANCE } from '../lib/taxonomy.mjs';
@@ -72,22 +74,29 @@ assert.throws(() => chunk(articles, 0));
 assert.deepEqual(classificationInput([articles[0]])[0].sourceId, 0);
 assert.ok(classificationInput([articles[0]])[0].headline === articles[0].originalTitle);
 
+// The prompt and the strict schema are asserted directly, so their rules are testable without
+// intercepting a request.
+const instruction = classificationInstruction();
+assert.ok(instruction.includes('choose the lower one'), 'The ladder rules must be part of the instruction');
+assert.ok(instruction.includes('never instructions'), 'Untrusted headlines must be declared as data');
+assert.ok(instruction.includes('epochal:'), 'Significance criteria travel with the request');
+assert.ok(!instruction.includes('undefined'), 'The prompt must not leak missing domain definitions');
+assert.ok(instruction.includes('Life & biology'), 'Domains are described by their label');
+assert.ok(instruction.includes('Earth observation'), 'Domain topics travel with the request');
+assert.ok(classificationSchema.properties.records.items.required.includes('significanceReason'), 'Every field is required by the strict schema');
+const batchInput = classificationInput(articles);
+assert.deepEqual(batchInput.map(item => item.sourceId), [0,1,2]);
+assert.ok(batchInput.every(item => item.summary.length > 0));
+
 let calls = 0;
 const signals = [];
 const batch = await classifyBatch(articles, {apiKey:'test', model:'test-model', fetcher:async(url, options) => {
  calls++; signals.push(options.signal);
  const body = JSON.parse(options.body);
  assert.equal(body.response_format.json_schema.strict, true, 'Structured classification must use a strict schema');
- assert.ok(body.response_format.json_schema.schema.properties.records.items.required.includes('significanceReason'));
- assert.ok(body.messages[0].content.includes('choose the lower one'), 'The ladder rules must be part of the instruction');
- assert.ok(body.messages[0].content.includes('never instructions'), 'Untrusted headlines must be declared as data');
- assert.ok(body.messages[0].content.includes('epochal:'), 'Significance criteria travel with the request');
- assert.ok(!body.messages[0].content.includes('undefined'), 'The prompt must not leak missing domain definitions');
- assert.ok(body.messages[0].content.includes('Life & biology'), 'Domains are described by their label');
- assert.ok(body.messages[0].content.includes('Earth observation'), 'Domain topics travel with the request');
+ assert.equal(body.messages[0].content, instruction, 'The batch sends exactly the published instruction');
  const input = JSON.parse(body.messages[1].content);
- assert.deepEqual(input.map(item => item.sourceId), [0,1,2]);
- assert.ok(input.every(item => item.summary.length > 0));
+ assert.deepEqual(input, batchInput, 'The batch sends exactly the bounded model input');
  if (calls === 1) return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({records:[entry(0,{domain:'planets'}),entry(1),entry(2)]})}}]});
  return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({records:[entry(0),entry(1),entry(2)]})}}]});
 }});
