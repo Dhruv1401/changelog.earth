@@ -41,6 +41,9 @@ everything else depends on.
 ## Vocabulary
 
 [`lib/taxonomy.mjs`](../lib/taxonomy.mjs) is the machine-readable draft of this vocabulary.
+[`lib/taxonomy-fallback.mjs`](../lib/taxonomy-fallback.mjs) is separate from it on purpose: it holds the
+heuristics that infer a story against this vocabulary, which are retuned against the archive and fail
+differently from the contract itself. Changing a label and changing a pattern are different edits.
 
 - **Domain** (15): which part of Earth is concerned. `life`, `earth`, `oceans`, `atmosphere`,
   `ecology`, `science`, `space`, `energy`, `technology`, `health`, `transport`, `infrastructure`,
@@ -135,7 +138,9 @@ The model is designed for an archive far larger than today's, so:
 - Evidence, significance and revision state are stored per event, so revisions and retractions
   are additive fields rather than a migration of the archive.
 - Past roughly 25,000 records the single JSON store should move to a database; the reader
-  interface (`classifyArchiveRecords`, `summariseClassification`) does not change when it does.
+  interface (`classifyArchiveRecords` in [`lib/classified-archive.mjs`](../lib/classified-archive.mjs),
+  `summariseClassification` in [`lib/classification-report.mjs`](../lib/classification-report.mjs))
+  does not change when it does.
 
 ## Validation
 

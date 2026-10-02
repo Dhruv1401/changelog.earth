@@ -64,3 +64,5 @@ for (const cell of gaps.domainChangeCells.slice(0, 25)) console.log(`  ${String(
 console.log(`\nCLUSTER CANDIDATES (${gaps.clusterCandidates.length} subjects reported by more than one story)`);
 for (const cluster of gaps.clusterCandidates.slice(0, 25)) console.log(`  ${String(cluster.count).padStart(3)}× ${cluster.clusterKey} — ${cluster.subject} — ${cluster.publishers.slice(0, 4).join(', ')}${cluster.publishers.length > 4 ? `, +${cluster.publishers.length - 4}` : ''} [${cluster.changeTypes.join(', ')}]`);
 console.log('\nUse these numbers to change labels in lib/taxonomy.mjs and docs/event-schema.md, not the other way round.');
+console.log('These counts include stories the fallback inferred, so a number that looks wrong may be the');
+console.log('heuristics in lib/taxonomy-fallback.mjs misreading a story rather than the vocabulary being wrong.');

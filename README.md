@@ -85,7 +85,7 @@ See [collection, archive and caching details](docs/architecture.md) for the edit
 
 The patch notes are the readable layer. Underneath, the archive is being shaped into a structured, source-backed record of changes to Earth: events with domains, change types, evidence and a significance ladder, each traceable to the reporting it came from. That work is deliberately **retrospective and offline**, so it never touches collection, the homepage or the feed.
 
-The vocabulary is a draft, and it is validated against the archive rather than assumed. [`docs/event-schema.md`](docs/event-schema.md) is the contract; [`lib/taxonomy.mjs`](lib/taxonomy.mjs) holds the machine-readable version of it.
+The vocabulary is a draft, and it is validated against the archive rather than assumed. [`docs/event-schema.md`](docs/event-schema.md) is the contract; [`lib/taxonomy.mjs`](lib/taxonomy.mjs) holds the machine-readable version of it, and [`lib/taxonomy-fallback.mjs`](lib/taxonomy-fallback.mjs) holds the separate heuristics that infer a story against it when no record exists.
 
 ```sh
 node scripts/classify-archive.mjs     # one-off retrospective classification, resumable
@@ -104,8 +104,10 @@ Classification writes [`data/classifications.json`](data/classifications.json) w
 | Change the ASCII globe | [`components/ascii-earth.tsx`](components/ascii-earth.tsx) and [`lib/ascii-earth.mjs`](lib/ascii-earth.mjs) |
 | Edit the page and theme | [`app/page.tsx`](app/page.tsx) and [`app/globals.css`](app/globals.css) |
 | Change story popouts and the source directory | [`components/news-details.tsx`](components/news-details.tsx) |
-| Change the event taxonomy or its rules | [`lib/taxonomy.mjs`](lib/taxonomy.mjs) and [`docs/event-schema.md`](docs/event-schema.md) |
-| Change retrospective classification | [`lib/classification.mjs`](lib/classification.mjs) |
+| Change the event vocabulary or its labels | [`lib/taxonomy.mjs`](lib/taxonomy.mjs) and [`docs/event-schema.md`](docs/event-schema.md) |
+| Change how unclassified stories are inferred | [`lib/taxonomy-fallback.mjs`](lib/taxonomy-fallback.mjs) |
+| Change the retrospective classification pass | [`lib/classification.mjs`](lib/classification.mjs), [`lib/classification-prompt.mjs`](lib/classification-prompt.mjs), [`lib/classification-records.mjs`](lib/classification-records.mjs) |
+| Change how the archive is measured and reported | [`lib/classification-report.mjs`](lib/classification-report.mjs) and [`lib/classified-archive.mjs`](lib/classified-archive.mjs) |
 
 Built with **React 19, TypeScript, Tailwind CSS 4 and Vinext**, with a Cloudflare Workers development runtime and a Next.js build for Vercel. Groq uses the REST API directly. The interface uses shadcn/ui, Radix, Motion and Hugeicons.
 
