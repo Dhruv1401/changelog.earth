@@ -5,7 +5,7 @@ let calls=0;
 const fetcher=async(_,options)=>{
  calls++; const body=JSON.parse(options.body);const input=JSON.parse(body.messages[1].content);
  assert.equal(input.length,8);assert(input.every(a=>Object.keys(a).join(',')==='sourceId,headline'));
- assert.equal(body.reasoning_effort,'low');assert.equal(body.max_completion_tokens,3000);
+ assert.equal(body.reasoning_effort,'low');assert.equal(body.max_completion_tokens,6000);
  return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({entries:input.map(a=>({sourceId:a.sourceId,title:`Species ${a.sourceId} joins the roster`,kind:'Added',worldwide:a.sourceId<2,scopeReason:'New species discovery'}))})}}]});
 };
 const options={apiKey:'test',fetcher,now:1000000};
