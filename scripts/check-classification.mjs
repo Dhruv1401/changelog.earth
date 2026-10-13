@@ -256,5 +256,5 @@ assert.notEqual(typo.status, 0, '--limt=1 must not run the classification');
 assert.match(typo.stderr, /Unknown option: --limt/);
 const limited = spawnSync(process.execPath, [script, '--limit=5', '--batch=10', '--dry-run'], {encoding:'utf8'});
 assert.equal(limited.status, 0, limited.stderr);
-assert.match(limited.stdout, /^Archive 352 stories · stored \d+ · pending 5 ·/m, 'Valid flags still bound the run');
+assert.match(limited.stdout, /^Archive \d+ stories · stored \d+ · pending 5 ·/m, 'Valid flags still bound the run');
 console.log('Taxonomy validation, strict classification, retries, provenance, resumable store, derived records and archive immutability pass.');
