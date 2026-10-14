@@ -29,7 +29,9 @@ let titleCalls=0;
 const signals=[];
 const recovered=await recover(news,{strict:true,apiKey:'test',fetcher:async(_,request)=>{signals.push(request.signal);return reply(++titleCalls===1 ? {...validEntry,title:'x'.repeat(81)} : validEntry);}});
 assert.equal(titleCalls,2);
-assert.equal(signals[0],signals[1],'Retries share the original generation deadline');
+assert.notEqual(signals[0],signals[1],'Each attempt gets its own generation deadline');
+assert.equal(signals[0].aborted,false);
+assert.equal(signals[1].aborted,false);
 assert.equal(recovered.editorial,'generated');
 assert.equal(recovered.articles[0].title,validEntry.title);
 const {getChangelog:invalid}=await import('../lib/changelog.mjs?title-recovery-fails');
@@ -178,6 +180,76 @@ try {
   },
  });
  assert.equal(fallbackResult[0].title, 'Telescope joins orbital roster');
+
+ // Recursive splitting on json_validate_failed: a multi-article batch that fails validation
+ // splits in half and retries each half with the collection schema, preserving classifications.
+ const splitArticles = [
+  { title: 'Coral species discovered in deep sea', originalTitle: 'Coral species discovered in deep sea', url: 'https://example.org/coral' },
+  { title: 'Sodium battery reaches high density', originalTitle: 'Sodium battery reaches high density', url: 'https://example.org/battery' },
+ ];
+ const splitClassifications = new Map();
+ const splitCalls = [];
+ const splitResult = await writePatchTitles(splitArticles, {
+  apiKey: 'test',
+  classifications: splitClassifications,
+  fetcher: async (_, req) => {
+   const body = JSON.parse(req.body);
+   const input = JSON.parse(body.messages[1].content);
+   splitCalls.push(input.length);
+   if (input.length === 2) {
+    return new Response(JSON.stringify({
+     error: { message: 'Generated JSON does not match expected schema', code: 'json_validate_failed' },
+    }), { status: 400 });
+   }
+   const isCoral = input[0].headline.includes('Coral');
+   const entry = isCoral ? {
+    sourceId: 0,
+    title: 'Deep coral joins marine roster',
+    kind: 'Added',
+    worldwide: true,
+    scopeReason: 'Expands ocean biodiversity knowledge',
+    domain: 'oceans',
+    changeType: 'DISCOVERED',
+    classificationScope: 'global',
+    significance: 'notable',
+    significanceConfidence: 'high',
+    significanceReason: 'Expands understanding of deep corals.',
+    evidenceStatus: 'confirmed',
+    subject: 'deep coral',
+    clusterKey: 'deep-coral',
+    claim: 'A new deep-sea coral species was identified.',
+    whyItMatters: 'Adds to known ocean biodiversity.',
+   } : {
+    sourceId: 0,
+    title: 'Sodium battery stat raised in trials',
+    kind: 'Buffed',
+    worldwide: true,
+    scopeReason: 'Advances energy storage technology',
+    domain: 'energy',
+    changeType: 'IMPROVED',
+    classificationScope: 'global',
+    significance: 'notable',
+    significanceConfidence: 'high',
+    significanceReason: 'Advances sodium battery capacity.',
+    evidenceStatus: 'confirmed',
+    subject: 'sodium battery',
+    clusterKey: 'sodium-battery',
+    claim: 'Sodium-ion cell reaches 160 Wh/kg in testing.',
+    whyItMatters: 'Provides alternative to lithium-based cells.',
+   };
+   return Response.json({
+    choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ entries: [entry] }) } }],
+   });
+  },
+ });
+ assert.equal(splitCalls.length, 3, 'Batch of 2 that fails validation splits into 2 calls of 1');
+ assert.deepEqual(splitCalls, [2, 1, 1]);
+ assert.equal(splitResult.length, 2);
+ assert.equal(splitResult[0].title, 'Deep coral joins marine roster');
+ assert.equal(splitResult[1].title, 'Sodium battery stat raised in trials');
+ assert.equal(splitClassifications.size, 2, 'Both split halves retain their collection classifications');
+ assert.equal(splitClassifications.get('https://example.org/coral').domain, 'oceans');
+ assert.equal(splitClassifications.get('https://example.org/battery').domain, 'energy');
 
  // The generated edition carries the collected records in their own top-level field, so the
  // collector script can persist them, and never folds them into the published articles.

@@ -37,11 +37,18 @@ assert(!selected.includes(older),'Older days must not displace candidates from a
 assert.equal(pool[1],busy[1],'Selection must not mutate the feed list');
 assert.deepEqual(selectCandidates([older,...varied]),[...varied,older]);
 const {getChangelog:diverse}=await import('../lib/changelog.mjs?diverse');
+const chunkedInputs=[];
 const edition=await diverse({...news,articles:pool},{apiKey:'test',strict:true,fetcher:async(_,options)=>{
  const input=JSON.parse(JSON.parse(options.body).messages[1].content);
- assert.deepEqual(input.map(a=>a.headline),selected.map(a=>a.title),'New categories must reach the editor in balanced order');
+ if (!input[0]?.rejectedTitle) {
+  chunkedInputs.push(input);
+ }
  return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({entries:input.map(a=>({sourceId:a.sourceId,title:a.headline,kind:a.sourceId===1 ? 'Nerfed' : 'Unlocked',worldwide:true,scopeReason:'Worldwide progress'}))})}}]});
 }});
+assert.equal(chunkedInputs.length,2,'24 candidates chunked into two batches of 12');
+assert.equal(chunkedInputs[0].length,12);
+assert.equal(chunkedInputs[1].length,12);
+assert.deepEqual(chunkedInputs.flat().map(a=>a.headline),selected.map(a=>a.title),'New categories must reach the editor in balanced order across chunks');
 assert.equal(edition.articles.length,6,'Publisher balancing must preserve the daily limit');
 assert(varied.every(a=>edition.articles.some(b=>b.url===a.url)),'The first six accepted stories must retain publisher variety');
 assert.equal(edition.articles.find(a=>a.url===varied[0].url).kind,'Nerfed','Preserve the editor label through publication selection');
