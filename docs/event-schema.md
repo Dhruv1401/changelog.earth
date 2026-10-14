@@ -124,9 +124,10 @@ Classification is derived data, never editorial history, and it must be separabl
   a stored record is derived on read by [`classifyArticle`](../lib/taxonomy-fallback.mjs) and reported
   as `inferred`. A `collection` record is always revisited by the offline pass, which has strictly
   richer input (category and summary).
-- The store carries a store-level `retrospective` flag, true only while every record came from the
-  offline, after-publication pass. The first live collection-time record flips it to false, so a
-  non-retrospective store is one that contains a decision made at publication time.
+- The store carries a store-level `retrospective` flag, true while every stored record came from the
+  offline, after-publication pass. It is recomputed from the merged records on every write rather than
+  flipped once, so it is true again once no live collection-time record remains: a non-retrospective
+  store is one that currently contains a decision made at publication time.
 - Regenerating the store must never modify `data/editions.json`.
 
 ## Scale

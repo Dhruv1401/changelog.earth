@@ -16,12 +16,12 @@ const articles = mergeEditions(previous,validateArchive(edition.articles));
 // Best-effort, and deliberately before the edition write: a malformed or missing classification
 // field must never block or erase the archive. The draft response carries the records in their own
 // top-level field; only this script (which owns the filesystem) writes them to the store.
-let classificationCount = 0;
+let classificationStored = {received:0, stored:0};
 try {
- classificationCount = saveCollectedClassifications(edition.classifications ?? {});
+ classificationStored = saveCollectedClassifications(edition.classifications ?? {});
 } catch (error) {
  console.warn(`Failed to store collection classifications: ${error.message}`);
 }
 await writeFile(path,JSON.stringify(articles,null,2)+'\n');
 const additions=articles.filter(article=>!previous.some(saved=>saved.url===article.url));
-console.log(`Collection ${edition.editorial}; archive contains ${articles.length} stories; added ${additions.length}, worldwide ${additions.filter(a=>a.worldwide===true).length}; stored ${classificationCount} classifications. Source publication dates: ${[...new Set(additions.map(a=>a.date.slice(0,10)))].join(', ') || 'none'}.`);
+console.log(`Collection ${edition.editorial}; archive contains ${articles.length} stories; added ${additions.length}, worldwide ${additions.filter(a=>a.worldwide===true).length}; stored ${classificationStored.stored} of ${classificationStored.received} classifications. Source publication dates: ${[...new Set(additions.map(a=>a.date.slice(0,10)))].join(', ') || 'none'}.`);

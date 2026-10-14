@@ -105,10 +105,17 @@ try {
  assert.equal(record.titleRevision, 1);
 
  // The collector script (and only it) writes the store; validateStore accepts method:'collection'.
- assert.equal(saveCollectedClassifications(classifications, testStorePath), 1, 'The collector writes one collected record');
+ const writeResult = saveCollectedClassifications(classifications, testStorePath);
+ assert.equal(writeResult.received, 1, 'The collector receives one collected record');
+ assert.equal(writeResult.stored, 1, 'The collector stores one new collected record');
  const savedStore = readStore(testStorePath);
  assert.equal(savedStore.records['https://example.org/squid'].method, 'collection');
  assert.equal(savedStore.retrospective, false, 'A store holding a live collection record is not retrospective');
+ // Re-collecting the same decision is received but not stored again: only the per-run classifiedAt
+ // changed, so the run summary must not over-report it as newly stored.
+ const resave = saveCollectedClassifications(classifications, testStorePath);
+ assert.equal(resave.received, 1);
+ assert.equal(resave.stored, 0, 'An unchanged re-collected record is received, not stored again');
 
  // The offline pass has richer input (category + summary), so it revisits a collection record.
  assert.equal(needsClassification(written, savedStore).length, 1, 'The offline pass revisits a collection record');

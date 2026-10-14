@@ -163,6 +163,16 @@ assert.equal(corrected[0].stale, true, 'A stale record is reported as stale rath
 assert.equal(corrected[0].significanceConfidence, 'low');
 const bumped = classifyArchiveRecords([story('a')], new Map([[articles[0].url, {...stored, sourceTitle:'Coral reef resilience', titleRevision:1}]]));
 assert.equal(bumped[0].stale, true, 'A newer title revision invalidates the record on read as well');
+// Provenance survives the read layer: a stored collection record is reported as 'collection', never
+// relabelled 'ai', and the read layer agrees with needsClassification that the offline pass owes it.
+const collection = {...stored, method:'collection'};
+const collectionStore = {records:{[articles[0].url]:collection}};
+const collected = classifyArchiveRecords([articles[0]], collectionStore.records);
+assert.equal(collected[0].method, 'collection', 'A collection record is not relabelled ai on read');
+assert.equal(collected[0].stale, true, 'The read layer agrees the offline pass still owes a collection record');
+assert.equal(collected[0].significanceConfidence, 'high', 'A matching collection record still shows its stored confidence');
+assert.equal(needsClassification([articles[0]], collectionStore).length, 1, 'needsClassification agrees the same record is stale');
+assert.equal(summariseClassification(collected).byMethod.collection, 1, 'The report counts a collection record as collection, not ai');
 assert.deepEqual(entries.map(entry => entry.url), articles.map(article => article.url), 'Ordering is deterministic: same date, then URL');
 const unclassified = classifyArchiveRecords([story('d')]);
 assert.equal(unclassified[0].method, 'inferred', 'Anything without a stored record is derived on read and reported as inferred');
