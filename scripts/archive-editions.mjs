@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { mergeEditions, validateArchive } from '../lib/edition-archive.mjs';
+import { saveCollectedClassifications } from '../lib/classification-store.mjs';
 
 const secret = process.env.ARCHIVE_SECRET;
 if (!secret) throw new Error('ARCHIVE_SECRET must be configured for collection');
@@ -12,6 +13,15 @@ if (!response.ok) throw new Error(`Edition HTTP ${response.status}`);
 const edition = await response.json();
 if (!['generated','empty'].includes(edition.editorial) || !edition.articles?.length) throw new Error('Collection did not complete; refusing a cached fallback');
 const articles = mergeEditions(previous,validateArchive(edition.articles));
+// Best-effort, and deliberately before the edition write: a malformed or missing classification
+// field must never block or erase the archive. The draft response carries the records in their own
+// top-level field; only this script (which owns the filesystem) writes them to the store.
+let classificationCount = 0;
+try {
+ classificationCount = saveCollectedClassifications(edition.classifications ?? {});
+} catch (error) {
+ console.warn(`Failed to store collection classifications: ${error.message}`);
+}
 await writeFile(path,JSON.stringify(articles,null,2)+'\n');
 const additions=articles.filter(article=>!previous.some(saved=>saved.url===article.url));
-console.log(`Collection ${edition.editorial}; archive contains ${articles.length} stories; added ${additions.length}, worldwide ${additions.filter(a=>a.worldwide===true).length}. Source publication dates: ${[...new Set(additions.map(a=>a.date.slice(0,10)))].join(', ') || 'none'}.`);
+console.log(`Collection ${edition.editorial}; archive contains ${articles.length} stories; added ${additions.length}, worldwide ${additions.filter(a=>a.worldwide===true).length}; stored ${classificationCount} classifications. Source publication dates: ${[...new Set(additions.map(a=>a.date.slice(0,10)))].join(', ') || 'none'}.`);

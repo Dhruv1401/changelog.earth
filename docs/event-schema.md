@@ -119,10 +119,14 @@ Classification is derived data, never editorial history, and it must be separabl
   source URL, with their own `promptVersion`, `model` and `classifiedAt`.
 - Every record stores the headline and `titleRevision` it was derived from, so a corrected title
   is detectable and reclassifiable instead of silently mismatched.
-- Records are marked `method: "ai"` or `method: "inferred"`. Anything without a stored record is
-  derived on read by [`classifyArticle`](../lib/taxonomy-fallback.mjs) and reported as `inferred`.
-- The store is **retrospective**: it was produced after publication from the saved headline and
-  publisher summary. Nothing in it may be presented as a decision made at publication time.
+- Records are marked `method: "ai"` (the offline pass, run after publication), `method: "collection"`
+  (captured live at collection time from the headline only) or `method: "inferred"`. Anything without
+  a stored record is derived on read by [`classifyArticle`](../lib/taxonomy-fallback.mjs) and reported
+  as `inferred`. A `collection` record is always revisited by the offline pass, which has strictly
+  richer input (category and summary).
+- The store carries a store-level `retrospective` flag, true only while every record came from the
+  offline, after-publication pass. The first live collection-time record flips it to false, so a
+  non-retrospective store is one that contains a decision made at publication time.
 - Regenerating the store must never modify `data/editions.json`.
 
 ## Scale

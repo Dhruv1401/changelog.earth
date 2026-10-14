@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { groqJSON } from '../lib/groq.mjs';
-import { readStore } from '../lib/classification-store.mjs';
+import { readStore, saveCollectedClassifications } from '../lib/classification-store.mjs';
 import { needsClassification } from '../lib/classification.mjs';
 import { CLASSIFICATION_PROMPT_VERSION } from '../lib/classification-prompt.mjs';
 import { writePatchTitles } from '../lib/patch-titles.mjs';
-import { unlinkSync, existsSync } from 'node:fs';
+import { unlinkSync, existsSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 let calls=0;
 const result=await groqJSON('test','{}',{apiKey:'test',fetcher:async()=>++calls===1 ? new Response('',{status:429,headers:{'retry-after':'0'}}) : Response.json({choices:[{finish_reason:'stop',message:{content:'{"ok":true}'}}]})});
 assert.equal(result.ok,true); assert.equal(calls,2);
@@ -68,10 +70,11 @@ try {
   whyItMatters: 'Adds to the known biodiversity of the twilight zone.',
  };
  const classifyCalls = [];
+ const classifications = new Map();
  const written = await writePatchTitles(classifiedNews.articles, {
   apiKey: 'test',
   model: 'test-model',
-  storePath: testStorePath,
+  classifications,
   fetcher: async (url) => {
    classifyCalls.push(url);
    return Response.json({
@@ -84,23 +87,29 @@ try {
  });
  assert.equal(classifyCalls.length, 1, 'Collection and extraction happen in exactly ONE model call');
  assert.equal(written[0].title, fullEntry.title);
- const savedStore = readStore(testStorePath);
- const record = savedStore.records['https://example.org/squid'];
- assert.ok(record, 'Record was stored in classifications store');
+ assert.equal(classifications.size, 1, 'Collection returns records keyed by source URL, without touching disk');
+ const record = classifications.get('https://example.org/squid');
+ assert.ok(record, 'A record is collected for the story');
  assert.equal(record.domain, 'oceans');
  assert.equal(record.changeType, 'DISCOVERED');
  assert.equal(record.scope, 'global');
  assert.equal(record.significance, 'notable');
  assert.equal(record.evidenceStatus, 'confirmed');
- assert.equal(record.method, 'ai');
+ assert.equal(record.method, 'collection', 'Collection records carry their own provenance, not the offline pass');
  assert.equal(record.provider, 'groq');
  assert.equal(record.model, 'test-model');
  assert.equal(record.promptVersion, CLASSIFICATION_PROMPT_VERSION);
  assert.equal(record.sourceTitle, 'Biologists discover glowing deep-sea squid');
  assert.equal(record.titleRevision, 1);
 
- // Backward compatibility: needsClassification recognizes the story is already classified and skips it.
- assert.equal(needsClassification(written, savedStore).length, 0, 'Classified story is recognized and skipped by offline classifier');
+ // The collector script (and only it) writes the store; validateStore accepts method:'collection'.
+ assert.equal(saveCollectedClassifications(classifications, testStorePath), 1, 'The collector writes one collected record');
+ const savedStore = readStore(testStorePath);
+ assert.equal(savedStore.records['https://example.org/squid'].method, 'collection');
+ assert.equal(savedStore.retrospective, false, 'A store holding a live collection record is not retrospective');
+
+ // The offline pass has richer input (category + summary), so it revisits a collection record.
+ assert.equal(needsClassification(written, savedStore).length, 1, 'The offline pass revisits a collection record');
 
  // Partial/missing or invalid classification: title still generated, collection never blocked.
  const invalidEntry = {
@@ -112,12 +121,13 @@ try {
   domain: 'not-a-domain',
   changeType: 'UNKNOWN',
  };
+ const invalidCollected = new Map();
  const unblocked = await writePatchTitles([{
   title: 'Trench mapped',
   url: 'https://example.org/trench',
  }], {
   apiKey: 'test',
-  storePath: testStorePath,
+  classifications: invalidCollected,
   fetcher: async () => Response.json({
    choices: [{
     finish_reason: 'stop',
@@ -126,23 +136,18 @@ try {
   }),
  });
  assert.equal(unblocked[0].title, invalidEntry.title);
- assert.equal(readStore(testStorePath).records['https://example.org/trench'], undefined, 'Invalid classification skipped without error');
+ assert.equal(invalidCollected.size, 0, 'Invalid classification is skipped without failing collection');
 
- // Storage failure resilience: invalid store path does not fail collection.
- const badStorage = await writePatchTitles([{
-  title: 'Coral reef survey updated',
-  url: 'https://example.org/coral',
- }], {
-  apiKey: 'test',
-  storePath: 'Z:\\nonexistent\\path\\store.json',
-  fetcher: async () => Response.json({
-   choices: [{
-    finish_reason: 'stop',
-    message: { content: JSON.stringify({ entries: [fullEntry] }) },
-   }],
-  }),
- });
- assert.equal(badStorage.length, 1, 'Storage failure never blocks collection');
+ // Storage failure resilience: a genuinely unwritable destination is surfaced, so the collector can
+ // catch and report it without blocking or erasing the edition. (A bad path on POSIX used to be a
+ // legal filename and silently succeed.)
+ const notADirectory = join(tmpdir(), `classifications-not-a-dir-${process.pid}`);
+ writeFileSync(notADirectory, 'not a directory');
+ try {
+  assert.throws(() => saveCollectedClassifications(classifications, join(notADirectory, 'store.json')), 'A real storage failure is surfaced, not swallowed');
+ } finally {
+  rmSync(notADirectory, {force: true});
+ }
 
  // Schema rejection fallback: json_validate_failed falls back to title-only extraction.
  let fallbackAttempts = 0;
@@ -173,6 +178,32 @@ try {
   },
  });
  assert.equal(fallbackResult[0].title, 'Telescope joins orbital roster');
+
+ // The generated edition carries the collected records in their own top-level field, so the
+ // collector script can persist them, and never folds them into the published articles.
+ const { getChangelog: carrying } = await import('../lib/changelog.mjs?classification-carrying');
+ const carried = await carrying({
+  articles: [{
+   title: 'Biologists discover glowing deep-sea squid',
+   url: 'https://example.org/squid-carrying',
+   date: '2026-10-13',
+   category: 'Science & nature',
+   publisher: 'Ocean Science',
+   summary: 'Publisher details.',
+  }],
+  stale: [],
+  unavailable: [],
+ }, {
+  apiKey: 'test',
+  strict: true,
+  fetcher: async () => Response.json({
+   choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ entries: [fullEntry] }) } }],
+  }),
+ });
+ assert.ok(carried.classifications, 'The draft response carries a separate top-level classifications field');
+ assert.equal(carried.classifications['https://example.org/squid-carrying'].method, 'collection');
+ assert.ok(carried.articles.every(article => !('classifications' in article)), 'Records never ride inside articles');
+
  console.log('Collection-time classification extraction, storage provenance, error tolerance, and schema fallback pass.');
 } finally {
  try { if (existsSync(testStorePath)) unlinkSync(testStorePath); } catch {}
