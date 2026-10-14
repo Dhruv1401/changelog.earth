@@ -111,6 +111,7 @@ try {
  const savedStore = readStore(testStorePath);
  assert.equal(savedStore.records['https://example.org/squid'].method, 'collection');
  assert.equal(savedStore.retrospective, false, 'A store holding a live collection record is not retrospective');
+ assert.equal(savedStore.model, 'test-model', 'Store-level model is updated by the collection write');
  // Re-collecting the same decision is received but not stored again: only the per-run classifiedAt
  // changed, so the run summary must not over-report it as newly stored.
  const resave = saveCollectedClassifications(classifications, testStorePath);
@@ -160,13 +161,16 @@ try {
 
  // Schema rejection fallback: json_validate_failed falls back to title-only extraction.
  let fallbackAttempts = 0;
+ const fallbackBudgets = [];
  const fallbackResult = await writePatchTitles([{
   title: 'New telescope launched into orbit',
   url: 'https://example.org/telescope',
  }], {
   apiKey: 'test',
-  fetcher: async () => {
+  fetcher: async (_, req) => {
    fallbackAttempts++;
+   const body = JSON.parse(req.body);
+   fallbackBudgets.push(body.max_completion_tokens);
    if (fallbackAttempts === 1) {
     return new Response(JSON.stringify({
      error: { message: 'Schema validation error', code: 'json_validate_failed' },
@@ -187,6 +191,7 @@ try {
   },
  });
  assert.equal(fallbackResult[0].title, 'Telescope joins orbital roster');
+ assert.deepEqual(fallbackBudgets, [6000, 3000], 'Initial collection call uses 6000 tokens; title-only fallback pins 3000');
 
  // Recursive splitting on json_validate_failed: a multi-article batch that fails validation
  // splits in half and retries each half with the collection schema, preserving classifications.

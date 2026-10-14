@@ -5,9 +5,10 @@ events. It is a proposal under test, not settled truth: the vocabulary and the s
 ladder are validated against the archive (see [Validation](#validation)) before any of it is
 wired into the live ingestion pipeline or the UI.
 
-Nothing here changes collection. [`lib/patch-titles.mjs`](../lib/patch-titles.mjs) still selects
-stories and writes patch titles exactly as before, and [`data/editions.json`](../data/editions.json)
-is never rewritten by the classification work.
+During collection, [`lib/patch-titles.mjs`](../lib/patch-titles.mjs) chunks candidate stories into
+12-item batches and extracts structured classification fields alongside patch titles (`method: "collection"`),
+which the collector workflow persists to [`data/classifications.json`](../data/classifications.json).
+[`data/editions.json`](../data/editions.json) is never rewritten by the classification work.
 
 ## Why
 
@@ -166,9 +167,9 @@ Deliberately unanswered until the archive answers them:
 
 | Slice | Scope | State |
 | --- | --- | --- |
-| 1 | Vocabulary, schema, retrospective classification store, report | this change |
-| 2 | Validate against the archive, revise the vocabulary | next |
-| 3 | Event records with clustering and multi-source entries | not started |
-| 4 | Significance in the live ingestion call | not started |
+| 1 | Vocabulary, schema, retrospective classification store, report | delivered |
+| 2 | Significance & structured extraction in the live collection call | this change |
+| 3 | Event records with clustering and multi-source entries | next |
+| 4 | Validate against the archive, revise the vocabulary | not started |
 | 5 | `/timeline`, `/explore`, `/domains/[domain]`, `/event/[id]`, `/api/events` | not started |
 | 6 | Structured contributions and CI validation | not started |

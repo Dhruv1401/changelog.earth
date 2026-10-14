@@ -23,6 +23,26 @@ const {getChangelog:cold}=await import('../lib/changelog.mjs?cold');
 const failure=await cold(news,{...options,archive:first.articles,fetcher:async()=>new Response('',{status:429})});assert.equal(failure.editorial,'cached');assert.deepEqual(failure.articles,first.articles);
 const {getChangelog:malformed}=await import('../lib/changelog.mjs?malformed');
 await assert.rejects(malformed(news,{...options,strict:true,fetcher:async()=>Response.json({choices:[{finish_reason:'stop',message:{content:'{"entries":[]}'}}]})}),/Incomplete patch titles/);
+const {getChangelog:titleOnlyFallback}=await import('../lib/changelog.mjs?title-only-tokens');
+let fallbackCalls=0;
+const fallbackBudgets=[];
+const fallbackResult=await titleOnlyFallback({articles:[news.articles[0]],stale:[],unavailable:[]},{
+ ...options,
+ fetcher:async(_,req)=>{
+  fallbackCalls++;
+  const body=JSON.parse(req.body);
+  fallbackBudgets.push(body.max_completion_tokens);
+  if (fallbackCalls===1) {
+   return new Response(JSON.stringify({
+    error:{message:'Schema validation error',code:'json_validate_failed'}
+   }),{status:400});
+  }
+  return Response.json({choices:[{finish_reason:'stop',message:{content:JSON.stringify({entries:[{sourceId:0,title:'Species 0 joins the roster',kind:'Added',worldwide:true,scopeReason:'New species discovery'}]})}}]});
+ }
+});
+assert.equal(fallbackCalls,2);
+assert.deepEqual(fallbackBudgets,[6000,3000],'Collection schema uses 6000; title-only fallback pins 3000 token budget');
+assert.equal(fallbackResult.articles[0].title,'Species 0 joins the roster');
 console.log('One headline-only AI pass, source preservation, saved rejection reuse, coalescing and outage safety pass.');
 
 const busy=Array.from({length:30},(_,i)=>({...news.articles[0],title:`Science headline ${i}`,url:`https://example.org/busy-${i}`,date:`2026-09-23T15:${String(59-i).padStart(2,'0')}:00Z`,publisher:'Busy science',provider:i%2 ? 'Science feed A' : 'Science feed B'}));
